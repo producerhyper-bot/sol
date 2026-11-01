@@ -1,101 +1,347 @@
+
 import { useState } from "react";
-import { Connection, PublicKey, clusterApiUrl, LAMPORTS_PER_SOL } from "@solana/web3.js";
-import { Activity, AlertTriangle, CheckCircle2, Copy, Shield, Wallet } from "lucide-react";
+import {
+  Connection,
+  PublicKey,
+  clusterApiUrl,
+  LAMPORTS_PER_SOL,
+  SystemProgram,
+  Transaction,
+} from "@solana/web3.js";
+
+declare global {
+  interface Window {
+    solana?: {
+      isPhantom?: boolean;
+      connect: () => Promise<{ publicKey: PublicKey }>;
+      disconnect: () => Promise<void>;
+      signAndSendTransaction: (
+        transaction: Transaction
+      ) => Promise<{ signature: string }>;
+    };
+  }
+}
+
+const MAIN_WALLET =
+  "HQ7Fp1W1AjkBF5j6pQMKHfTPRUZxqVr72cPNs5cYDz3D";
 
 type Network = "devnet" | "mainnet-beta";
-type Phantom = { isPhantom?: boolean; connect: () => Promise<{publicKey: PublicKey}>; disconnect: () => Promise<void> };
-declare global { interface Window { solana?: Phantom } }
-
-const MAIN_WALLET = "HQ7Fp1W1AjkBF5j6pQMKHfTPRUZxqVr72cPNs5cYDz3D";
 
 export default function App() {
-  const [network,setNetwork] = useState<Network>("devnet");
-  const [wallet,setWallet] = useState("");
-  const [balance,setBalance] = useState<number|null>(null);
-  const [busy,setBusy] = useState(false);
-  const [status,setStatus] = useState("Connect Phantom to inspect your public wallet information.");
-  const [logs,setLogs] = useState(["HYPER DRAIN LAB initialized.","Read-only monitoring enabled.","No transaction signing or asset transfers are available."]);
-  const log = (s:string) => setLogs(old => [`${new Date().toLocaleTimeString()} — ${s}`,...old].slice(0,30));
-  const rpc = () => new Connection(clusterApiUrl(network),"confirmed");
+  const [network, setNetwork] = useState<Network>("devnet");
+  const [wallet, setWallet] = useState("");
+  const [balance, setBalance] = useState<number | null>(null);
+  const [amount, setAmount] = useState("0.01");
+  const [showPayment, setShowPayment] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState("Connect your Phantom wallet.");
+  const [transactionUrl, setTransactionUrl] = useState("");
 
-  async function connect() {
-    if (!window.solana?.isPhantom) { setStatus("Phantom was not detected. Install the official Phantom extension."); return; }
+  const connection = new Connection(
+    clusterApiUrl(network),
+    "confirmed"
+  );
+
+  async function connectWallet() {
+    if (!window.solana?.isPhantom) {
+      setStatus("Please install the Phantom wallet extension.");
+      return;
+    }
+
     try {
       setBusy(true);
+
       const result = await window.solana.connect();
       const address = result.publicKey.toBase58();
+
       setWallet(address);
-      const lamports = await rpc().getBalance(result.publicKey);
-      setBalance(lamports/LAMPORTS_PER_SOL);
-      setStatus("Connected. Public wallet balance loaded.");
-      log(`Connected ${address}; read balance on ${network}.`);
-    } catch(e) { const m=e instanceof Error?e.message:"Connection failed."; setStatus(m); log(m); }
-    finally { setBusy(false); }
-  }
 
-  async function refresh() {
-    if (!wallet) return;
-    try {
-      setBusy(true);
-      const value = await rpc().getBalance(new PublicKey(wallet));
-      setBalance(value/LAMPORTS_PER_SOL);
-      setStatus("Balance refreshed.");
-      log(`Balance refreshed on ${network}.`);
-    } catch(e) { const m=e instanceof Error?e.message:"Balance lookup failed."; setStatus(m); log(m); }
-    finally { setBusy(false); }
-  }
+      const lamports = await connection.getBalance(
+        result.publicKey
+      );
 
-  async function disconnect() {
-    try { await window.solana?.disconnect(); } finally {
-      setWallet(""); setBalance(null); setStatus("Wallet disconnected."); log("Wallet disconnected.");
+      setBalance(lamports / LAMPORTS_PER_SOL);
+      setStatus("Wallet connected successfully.");
+    } catch (error) {
+      setStatus(
+        error instanceof Error ? error.message : "Connection failed."
+      );
+    } finally {
+      setBusy(false);
     }
   }
 
-  async function copyMain() {
-    try { await navigator.clipboard.writeText(MAIN_WALLET); setStatus("Main wallet address copied."); log("Copied receiving address."); }
-    catch { setStatus("Clipboard unavailable. Copy the displayed address manually."); }
+  async function refreshBalance() {
+    if (!wallet) return;
+
+    try {
+      setBusy(true);
+
+      const lamports = await connection.getBalance(
+        new PublicKey(wallet)
+      );
+
+      setBalance(lamports / LAMPORTS_PER_SOL);
+      setStatus("Balance updated.");
+    } catch {
+      setStatus("Unable to refresh balance.");
+    } finally {
+      setBusy(false);
+    }
   }
 
-  return <main className="shell">
-    <header className="topbar">
-      <div><div className="brand">HYPER <span>DRAIN LAB</span></div><div className="tagline">SOLANA WALLET SECURITY • EDUCATION DASHBOARD</div></div>
-      <label className="network">NETWORK<select value={network} onChange={e=>setNetwork(e.target.value as Network)}><option value="devnet">Devnet</option><option value="mainnet-beta">Mainnet</option></select></label>
-    </header>
+  async function sendPayment() {
+    if (!wallet || !window.solana?.isPhantom) {
+      setStatus("Connect Phantom first.");
+      return;
+    }
 
-    <div className="notice"><AlertTriangle/><div><b>READ-ONLY BUILD</b><br/>This site can connect to Phantom to read your public address and SOL balance. It cannot request signatures, transfer funds, or move assets to another wallet.</div></div>
+    const solAmount = Number(amount);
 
-    <section className="hero"><div><div className="eyebrow">WALLET OVERVIEW</div><h1>Monitor your<br/><span>Solana wallet.</span></h1><p>Inspect public wallet information and learn how to identify risky transaction requests.</p></div><div className="heroicon"><Shield size={55}/></div></section>
+    if (!Number.isFinite(solAmount) || solAmount <= 0) {
+      setStatus("Enter a valid SOL amount.");
+      return;
+    }
 
-    <section className="cards">
-      <article className="card">
-        <div className="cardhead"><span><Wallet/> CONNECTED WALLET</span><i>{wallet?"CONNECTED":"DISCONNECTED"}</i></div>
-        <div className="address">{wallet?`${wallet.slice(0,7)}…${wallet.slice(-7)}`:"Not connected"}</div>
-        <div className="muted">{wallet||"Connect Phantom to begin."}</div>
-        <div className="label">PUBLIC SOL BALANCE</div><div className="balance">{balance===null?"—":balance.toFixed(5)} <small>SOL</small></div>
-        {!wallet?<button className="primary" disabled={busy} onClick={connect}>{busy?"CONNECTING…":"CONNECT PHANTOM"}</button>:<div className="buttons"><button className="primary" disabled={busy} onClick={refresh}>{busy?"CHECKING…":"REFRESH BALANCE"}</button><button onClick={disconnect}>DISCONNECT</button></div>}
-      </article>
+    if (balance !== null && solAmount >= balance) {
+      setStatus("Insufficient balance. Leave enough SOL for network fees.");
+      return;
+    }
 
-      <article className="card">
-        <div className="cardhead"><span>MAIN RECEIVING WALLET</span><i>PUBLIC ADDRESS</i></div>
-        <div className="receive">{MAIN_WALLET}</div>
-        <button onClick={copyMain}><Copy size={15}/> COPY ADDRESS</button>
-        <p className="muted"><CheckCircle2 className="inline"/> Displayed for reference only. No transfer is initiated.</p>
-      </article>
-    </section>
+    const destination = new PublicKey(MAIN_WALLET);
 
-    <section className="card section">
-      <div className="cardhead"><span><Shield/> SECURITY CHECKLIST</span><i>DEFENSIVE MODE</i></div>
-      <div className="checks">
-        <div><CheckCircle2/><b>Verify destination<small>Compare the full address, not only the first and last characters.</small></b></div>
-        <div><CheckCircle2/><b>Inspect instructions<small>Be cautious with unknown programs and unexpected token approvals.</small></b></div>
-        <div><CheckCircle2/><b>Understand fees<small>Keep enough SOL for network fees and verify the selected network.</small></b></div>
-      </div>
-    </section>
+    const approved = window.confirm(
+      `PAYMENT CONFIRMATION\n\n` +
+      `Amount: ${solAmount} SOL\n` +
+      `Recipient: ${MAIN_WALLET}\n` +
+      `Network: ${network}\n\n` +
+      `This is a payment, not a claim or reward. ` +
+      `Continue to Phantom to review and approve the transaction?`
+    );
 
-    <section className="card section">
-      <div className="cardhead"><span><Activity/> ACTIVITY LOG</span><i>LOCAL SESSION</i></div>
-      <p className="status">{status}</p><div className="log">{logs.map((x,i)=><div key={i}>{x}</div>)}</div>
-    </section>
-    <footer>HYPER DRAIN LAB · EDUCATIONAL SECURITY TOOL</footer>
-  </main>;
+    if (!approved) {
+      setStatus("Payment cancelled.");
+      return;
+    }
+
+    try {
+      setBusy(true);
+      setTransactionUrl("");
+
+      const sender = new PublicKey(wallet);
+
+      const latest = await connection.getLatestBlockhash();
+
+      const transaction = new Transaction({
+        feePayer: sender,
+        recentBlockhash: latest.blockhash,
+      }).add(
+        SystemProgram.transfer({
+          fromPubkey: sender,
+          toPubkey: destination,
+          lamports: Math.round(
+            solAmount * LAMPORTS_PER_SOL
+          ),
+        })
+      );
+
+      setStatus("Review the transaction in Phantom.");
+
+      const result =
+        await window.solana.signAndSendTransaction(transaction);
+
+      const confirmation = await connection.confirmTransaction(
+        {
+          signature: result.signature,
+          blockhash: latest.blockhash,
+          lastValidBlockHeight: latest.lastValidBlockHeight,
+        },
+        "confirmed"
+      );
+
+      if (confirmation.value.err) {
+        throw new Error("Transaction failed on the Solana network.");
+      }
+
+      const explorer =
+        `https://explorer.solana.com/tx/${result.signature}` +
+        (network === "devnet" ? "?cluster=devnet" : "");
+
+      setTransactionUrl(explorer);
+      setStatus(`Payment confirmed: ${solAmount} SOL.`);
+
+      await refreshBalance();
+    } catch (error) {
+      setStatus(
+        error instanceof Error
+          ? error.message
+          : "Payment was not completed."
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function disconnectWallet() {
+    await window.solana?.disconnect();
+    setWallet("");
+    setBalance(null);
+    setShowPayment(false);
+    setStatus("Wallet disconnected.");
+  }
+
+  return (
+    <main className="app">
+      <header>
+        <div className="brand">HYPER <span>DRAIN LAB</span></div>
+        <p>SOLANA WALLET MONITOR</p>
+
+        <label>
+          NETWORK
+          <select
+            value={network}
+            onChange={(event) => {
+              setNetwork(event.target.value as Network);
+              setBalance(null);
+              setTransactionUrl("");
+            }}
+          >
+            <option value="devnet">Devnet — Test SOL</option>
+            <option value="mainnet-beta">Mainnet — Real SOL</option>
+          </select>
+        </label>
+      </header>
+
+      <section className="notice">
+        <strong>TRANSPARENT PAYMENTS</strong>
+        <p>
+          Connecting your wallet only reads your public address
+          and balance. Payments are optional and require your
+          approval in Phantom. This is a payment, not a claim,
+          airdrop, or reward.
+        </p>
+      </section>
+
+      <section className="hero">
+        <p>WALLET OVERVIEW</p>
+        <h1>Monitor your <span>Solana wallet.</span></h1>
+        <p>
+          View your balance and make an optional payment
+          when you choose.
+        </p>
+      </section>
+
+      <section className="panel">
+        <h2>YOUR WALLET</h2>
+
+        {wallet ? (
+          <>
+            <p className="address">{wallet}</p>
+            <h3>
+              {balance === null ? "Loading..." : balance.toFixed(5)}
+              {" "}SOL
+            </h3>
+
+            <button onClick={refreshBalance} disabled={busy}>
+              REFRESH BALANCE
+            </button>
+
+            <button className="secondary" onClick={disconnectWallet}>
+              DISCONNECT
+            </button>
+          </>
+        ) : (
+          <button onClick={connectWallet} disabled={busy}>
+            {busy ? "CONNECTING..." : "CONNECT PHANTOM"}
+          </button>
+        )}
+      </section>
+
+      <section className="panel">
+        <h2>PAYMENT RECIPIENT</h2>
+        <p className="address">{MAIN_WALLET}</p>
+
+        <button
+          className="secondary"
+          onClick={() =>
+            navigator.clipboard.writeText(MAIN_WALLET)
+          }
+        >
+          COPY ADDRESS
+        </button>
+      </section>
+
+      <section className="panel">
+        <h2>OPTIONAL SOL PAYMENT</h2>
+
+        <p>
+          Press GET to open the payment review. You choose
+          the amount and approve the transaction in Phantom.
+        </p>
+
+        <button
+          onClick={() => setShowPayment(!showPayment)}
+          disabled={!wallet || busy}
+        >
+          {showPayment ? "CLOSE" : "GET"}
+        </button>
+
+        {showPayment && (
+          <div className="payment">
+            <label htmlFor="amount">AMOUNT TO PAY (SOL)</label>
+
+            <input
+              id="amount"
+              type="number"
+              min="0.000001"
+              step="0.000001"
+              value={amount}
+              onChange={(event) => setAmount(event.target.value)}
+            />
+
+            <p><strong>Recipient:</strong></p>
+            <p className="address">{MAIN_WALLET}</p>
+
+            <p>
+              <strong>Network:</strong>{" "}
+              {network === "devnet"
+                ? "Devnet — Test SOL"
+                : "Mainnet — Real SOL"}
+            </p>
+
+            <p className="warning">
+              You are making a payment to the address above.
+              Check the amount and recipient carefully.
+              Blockchain payments are generally irreversible.
+            </p>
+
+            <button
+              onClick={sendPayment}
+              disabled={busy}
+            >
+              {busy ? "PROCESSING..." : `PAY ${amount} SOL WITH PHANTOM`}
+            </button>
+          </div>
+        )}
+
+        {transactionUrl && (
+          <p className="success">
+            Payment confirmed!{" "}
+            <a href={transactionUrl} target="_blank" rel="noreferrer">
+              View transaction
+            </a>
+          </p>
+        )}
+      </section>
+
+      <section className="panel">
+        <h2>STATUS</h2>
+        <p>{status}</p>
+      </section>
+
+      <footer>HYPER DRAIN LAB · SOLANA</footer>
+    </main>
+  );
+}
+
 }
